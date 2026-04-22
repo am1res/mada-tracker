@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MADA Tracker · TikTok Shop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">M</div>
+      <div>
+        <div class="brand-name">MADA Tracker</div>
+        <div class="brand-sub">TikTok Shop performance &amp; affiliate tools</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="daily">Daily Performance</button>
+      <button class="tab" data-tab="affiliate">Affiliate Status</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ DAILY PERFORMANCE ============ -->
+    <section id="tab-daily" class="panel active">
+      <div class="panel-head">
+        <div>
+          <h1>Daily Performance</h1>
+          <p class="muted">Upload a <b>Video-Performance-List</b> export. Files are processed in your browser and never uploaded to any server.</p>
+        </div>
+      </div>
+
+      <div class="dropzone" id="dz-daily">
+        <input type="file" id="file-daily" accept=".xlsx,.xls" hidden />
+        <div class="dz-inner">
+          <div class="dz-icon">↑</div>
+          <div class="dz-text">
+            <div class="dz-title">Drop Video-Performance-List.xlsx here</div>
+            <div class="dz-sub">or <button class="link" id="btn-daily">browse your computer</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="daily-result" class="result" hidden>
+        <div class="summary-bar">
+          <div class="chip" id="daily-range"></div>
+          <div class="chip" id="daily-count"></div>
+          <div class="stats">
+            <div class="stat"><span class="stat-k">Total Views</span><span class="stat-v" id="tot-vv">0</span></div>
+            <div class="stat"><span class="stat-k">V-to-L Clicks</span><span class="stat-v" id="tot-clicks">0</span></div>
+            <div class="stat"><span class="stat-k">Avg CTR</span><span class="stat-v" id="avg-ctr">0%</span></div>
+            <div class="stat"><span class="stat-k">Total GMV</span><span class="stat-v" id="tot-gmv">$0</span></div>
+          </div>
+          <div class="grow"></div>
+          <input type="search" id="daily-search" placeholder="Search creator, video, product…" />
+          <button class="ghost" id="daily-export">Export CSV</button>
+        </div>
+
+        <div class="table-wrap">
+          <table id="daily-table">
+            <thead>
+              <tr>
+                <th data-key="creator">Creator</th>
+                <th data-key="video">Video</th>
+                <th data-key="time">Posted</th>
+                <th data-key="vv" class="num">Views</th>
+                <th data-key="likes" class="num">Likes</th>
+                <th data-key="vlclicks" class="num">V-to-L Clicks</th>
+                <th data-key="ctr" class="num">CTR</th>
+                <th data-key="pclicks" class="num">Product Clicks</th>
+                <th data-key="orders" class="num">Orders</th>
+                <th data-key="gmv" class="num">GMV</th>
+                <th data-key="link">Link</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ AFFILIATE STATUS ============ -->
+    <section id="tab-affiliate" class="panel">
+      <div class="panel-head">
+        <div>
+          <h1>Affiliate Status</h1>
+          <p class="muted">Upload a <b>Video_List</b> Excel and your <b>Nicknames.txt</b>. We match every nickname against the list and show who posted, when, and all their videos (including duplicates).</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="dropzone" id="dz-vlist">
+          <input type="file" id="file-vlist" accept=".xlsx,.xls" hidden />
+          <div class="dz-inner">
+            <div class="dz-icon">↑</div>
+            <div class="dz-text">
+              <div class="dz-title">Video_List.xlsx</div>
+              <div class="dz-sub" id="vlist-sub">or <button class="link" data-for="file-vlist">browse</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="dropzone" id="dz-nicks">
+          <input type="file" id="file-nicks" accept=".txt,.csv" hidden />
+          <div class="dz-inner">
+            <div class="dz-icon">↑</div>
+            <div class="dz-text">
+              <div class="dz-title">Nicknames.txt</div>
+              <div class="dz-sub" id="nicks-sub">or <button class="link" data-for="file-nicks">browse</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="run-affiliate" disabled>Run Match</button>
+        <button class="ghost" id="clear-affiliate">Clear</button>
+      </div>
+
+      <div id="aff-result" class="result" hidden>
+        <div class="summary-bar">
+          <div class="chip chip-green" id="aff-posted"></div>
+          <div class="chip chip-red" id="aff-missing"></div>
+          <div class="chip" id="aff-total-videos"></div>
+          <div class="grow"></div>
+          <div class="toggle-group">
+            <button class="toggle active" data-filter="all">All</button>
+            <button class="toggle" data-filter="posted">Posted</button>
+            <button class="toggle" data-filter="missing">Not Posted</button>
+          </div>
+          <input type="search" id="aff-search" placeholder="Search nickname…" />
+          <button class="ghost" id="aff-export">Export CSV</button>
+        </div>
+
+        <div class="table-wrap">
+          <table id="aff-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Creator</th>
+                <th>Status</th>
+                <th>Posted Date</th>
+                <th>Video Link</th>
+                <th class="num">Videos</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>© MADA PM · ForLongLife</span>
+    <span class="muted">Client-side only — your files are never uploaded.</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
