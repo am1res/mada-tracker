@@ -123,6 +123,15 @@
            : headers.findIndex(h => /video.*gmv|gmv.*video|shoppable.*gmv/i.test(h)),
       ctr: headers.findIndex(h => /click-through rate/i.test(h))
     };
+    const parsePct = (v) => {
+      if (v === null || v === undefined || v === '' || v === '--') return 0;
+      if (typeof v === 'number') return v > 1 ? v : v * 100; // decimal fraction -> percent
+      const s = String(v).trim();
+      const hasPct = s.endsWith('%');
+      const n = parseFloat(s.replace(/[%,\s]/g,''));
+      if (isNaN(n)) return 0;
+      return hasPct ? n : (n > 1 ? n : n * 100);
+    };
 
     // Date range from first row (cell A1 has "[Date Range]: ...")
     let range = '';
@@ -153,6 +162,7 @@
         pclicks: toNumber(r[idx.pclicks]),
         orders: toNumber(r[idx.orders]),
         gmv: toNumber(r[idx.gmv]),
+        ctrNum: parsePct(r[idx.ctr]),
         ctr: r[idx.ctr]
       });
     }
@@ -185,27 +195,28 @@
     $('#daily-range').textContent = range ? 'Date: ' + range : 'Date range not detected';
     $('#daily-count').textContent = `${dailyRows.length} videos`;
     const totV = dailyRows.reduce((s,r)=>s+r.vv,0);
-    const totC = dailyRows.reduce((s,r)=>s+r.vlclicks,0);
+    const totPC = dailyRows.reduce((s,r)=>s+r.pclicks,0);
     const totG = dailyRows.reduce((s,r)=>s+r.gmv,0);
-    const avgCtr = totV ? (totC/totV)*100 : 0;
+    // CTOR = simple average of per-video CTR percentages
+    const avgCtor = dailyRows.length
+      ? dailyRows.reduce((s,r)=>s+r.ctrNum,0) / dailyRows.length
+      : 0;
     $('#tot-vv').textContent = fmtNum(totV);
-    $('#tot-clicks').textContent = fmtNum(totC);
-    $('#avg-ctr').textContent = avgCtr.toFixed(2)+'%';
+    $('#tot-clicks').textContent = fmtNum(totPC);
+    $('#avg-ctr').textContent = avgCtor.toFixed(2)+'%';
     $('#tot-gmv').textContent = fmtMoney(totG);
 
     const tb = $('#daily-table tbody');
     tb.innerHTML = data.map(r => {
-      const handle = cleanHandle(r.creator);
-      const ctr = (typeof r.ctr === 'string' && r.ctr.includes('%')) ? r.ctr : (r.vv ? ((r.vlclicks/r.vv)*100).toFixed(2)+'%' : '0.00%');
+      const ctr = r.ctrNum.toFixed(2) + '%';
       return `<tr>
         <td><div class="creator-cell"><div class="avatar" style="background:${colorFor(r.creator)}">${escapeHtml(initials(r.creator))}</div>@${escapeHtml(r.creator)}</div></td>
         <td class="wrap" title="${escapeHtml(r.video)}">${escapeHtml(String(r.video).slice(0,140))}${String(r.video).length>140?'…':''}</td>
         <td>${escapeHtml(String(r.time||''))}</td>
         <td class="num">${fmtNum(r.vv)}</td>
         <td class="num">${fmtNum(r.likes)}</td>
-        <td class="num">${fmtNum(r.vlclicks)}</td>
-        <td class="num">${escapeHtml(ctr)}</td>
         <td class="num">${fmtNum(r.pclicks)}</td>
+        <td class="num">${ctr}</td>
         <td class="num">${fmtNum(r.orders)}</td>
         <td class="num">${fmtMoney(r.gmv)}</td>
         <td>${r.link ? `<a class="link-cell" href="${r.link}" target="_blank" rel="noopener">Open</a>` : ''}</td>
@@ -223,10 +234,9 @@
   $('#daily-search').addEventListener('input', () => renderDaily($('#daily-range').textContent.replace(/^Date:\s*/,'')));
   $('#btn-daily').addEventListener('click', e => { e.stopPropagation(); $('#file-daily').click(); });
   $('#daily-export').addEventListener('click', () => {
-    const head = ['Creator','Video','Posted','Views','Likes','V-to-L Clicks','CTR','Product Clicks','Orders','GMV','Link'];
-    const body = dailyRows.map(r => [r.creator, r.video, r.time, r.vv, r.likes, r.vlclicks,
-      (r.vv ? ((r.vlclicks/r.vv)*100).toFixed(2)+'%' : '0%'),
-      r.pclicks, r.orders, r.gmv.toFixed(2), r.link]);
+    const head = ['Creator','Video','Posted','Views','Likes','Product Clicks','CTOR','Orders','GMV','Link'];
+    const body = dailyRows.map(r => [r.creator, r.video, r.time, r.vv, r.likes,
+      r.pclicks, r.ctrNum.toFixed(2)+'%', r.orders, r.gmv.toFixed(2), r.link]);
     downloadCSV([head, ...body], 'daily-performance.csv');
   });
   wireDropzone('dz-daily','file-daily', handleDailyFile);
