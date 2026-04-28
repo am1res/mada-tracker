@@ -31,25 +31,26 @@
       <div class="panel-head">
         <div>
           <h1>Daily Performance</h1>
-          <p class="muted">Upload a <b>Video-Performance-List</b> export. Files are processed in your browser and never uploaded to any server.</p>
+          <p class="muted">Upload one or many <b>Video-Performance-List</b> exports. Each file becomes one daily row in the summary — copy-paste straight into your sheet.</p>
         </div>
       </div>
 
       <div class="dropzone" id="dz-daily">
-        <input type="file" id="file-daily" accept=".xlsx,.xls" hidden />
+        <input type="file" id="file-daily" accept=".xlsx,.xls" multiple hidden />
         <div class="dz-inner">
           <div class="dz-icon">↑</div>
           <div class="dz-text">
-            <div class="dz-title">Drop Video-Performance-List.xlsx here</div>
-            <div class="dz-sub">or <button class="link" id="btn-daily">browse your computer</button></div>
+            <div class="dz-title">Drop one or several Video-Performance-List files</div>
+            <div class="dz-sub">or <button class="link" id="btn-daily">browse your computer</button> · re-drop to add more</div>
           </div>
         </div>
       </div>
 
+      <div id="daily-loaded" class="loaded-files" hidden></div>
+
       <div id="daily-result" class="result" hidden>
         <div class="summary-bar">
-          <div class="chip" id="daily-range"></div>
-          <div class="chip" id="daily-count"></div>
+          <div class="chip" id="daily-files-count"></div>
           <div class="stats">
             <div class="stat"><span class="stat-k">Total Views</span><span class="stat-v" id="tot-vv">0</span></div>
             <div class="stat"><span class="stat-k">Product Clicks</span><span class="stat-v" id="tot-clicks">0</span></div>
@@ -57,29 +58,57 @@
             <div class="stat"><span class="stat-k">Total GMV</span><span class="stat-v" id="tot-gmv">$0</span></div>
           </div>
           <div class="grow"></div>
-          <input type="search" id="daily-search" placeholder="Search creator, video, product…" />
+          <button class="ghost" id="daily-copy">Copy Table</button>
           <button class="ghost" id="daily-export">Export CSV</button>
+          <button class="ghost" id="daily-clear">Clear all</button>
         </div>
 
-        <div class="table-wrap">
-          <table id="daily-table">
+        <h3 class="section-h">Summary by date</h3>
+        <div class="table-wrap compact">
+          <table id="daily-summary">
             <thead>
               <tr>
-                <th data-key="creator">Creator</th>
-                <th data-key="video">Video</th>
-                <th data-key="time">Posted</th>
-                <th data-key="vv" class="num">Views</th>
-                <th data-key="likes" class="num">Likes</th>
-                <th data-key="pclicks" class="num">Product Clicks</th>
-                <th data-key="ctrNum" class="num">CTOR</th>
-                <th data-key="orders" class="num">Orders</th>
-                <th data-key="gmv" class="num">GMV</th>
-                <th data-key="link">Link</th>
+                <th>Date</th>
+                <th class="num">Views</th>
+                <th class="num">Product Clicks</th>
+                <th class="num">CTOR</th>
+                <th class="num">GMV</th>
+                <th class="num">Videos</th>
+                <th></th>
               </tr>
             </thead>
             <tbody></tbody>
+            <tfoot></tfoot>
           </table>
         </div>
+
+        <details class="details-block">
+          <summary>Per-video breakdown <span class="muted" id="per-video-count"></span></summary>
+          <div class="summary-bar small">
+            <input type="search" id="daily-search" placeholder="Search creator, video, product…" />
+            <select id="daily-date-filter"><option value="">All dates</option></select>
+          </div>
+          <div class="table-wrap">
+            <table id="daily-table">
+              <thead>
+                <tr>
+                  <th data-key="date">Date</th>
+                  <th data-key="creator">Creator</th>
+                  <th data-key="video">Video</th>
+                  <th data-key="time">Posted</th>
+                  <th data-key="vv" class="num">Views</th>
+                  <th data-key="likes" class="num">Likes</th>
+                  <th data-key="pclicks" class="num">Product Clicks</th>
+                  <th data-key="ctrNum" class="num">CTOR</th>
+                  <th data-key="orders" class="num">Orders</th>
+                  <th data-key="gmv" class="num">GMV</th>
+                  <th data-key="link">Link</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </details>
       </div>
     </section>
 

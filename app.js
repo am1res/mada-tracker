@@ -59,7 +59,7 @@
   }
 
   // ====================== Dropzone wiring ======================
-  function wireDropzone(zoneId, inputId, onFile){
+  function wireDropzone(zoneId, inputId, onFile, {multiple=false} = {}){
     const zone = document.getElementById(zoneId);
     const input = document.getElementById(inputId);
     zone.addEventListener('click', e => {
@@ -70,9 +70,24 @@
     zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
     zone.addEventListener('drop', e => {
       e.preventDefault(); zone.classList.remove('drag');
-      if (e.dataTransfer.files?.[0]) { input.files = e.dataTransfer.files; onFile(e.dataTransfer.files[0]); }
+      if (e.dataTransfer.files?.length) {
+        if (multiple) for (const f of e.dataTransfer.files) onFile(f);
+        else onFile(e.dataTransfer.files[0]);
+      }
     });
-    input.addEventListener('change', () => { if (input.files?.[0]) onFile(input.files[0]); });
+    input.addEventListener('change', () => {
+      if (!input.files?.length) return;
+      if (multiple) for (const f of input.files) onFile(f);
+      else onFile(input.files[0]);
+      input.value = '';
+    });
+  }
+
+  function showToast(msg){
+    const old = document.querySelector('.toast'); if (old) old.remove();
+    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 1900);
   }
   // "browse" inner buttons
   document.addEventListener('click', e => {
@@ -83,100 +98,241 @@
   });
 
   // ====================== Daily Performance ======================
-  let dailyRows = [];
+  // dailyFiles: [{ id, fileName, dateLabel, dateKey, rows: [...] }]
+  let dailyFiles = [];
   let dailySort = {key: 'vv', dir: -1};
 
   function readXlsx(file){
     return file.arrayBuffer().then(buf => XLSX.read(buf, {type:'array'}));
   }
 
-  async function handleDailyFile(file){
-    $('#dz-daily').classList.add('filled');
-    $('#dz-daily .dz-title').textContent = file.name;
-
-    const wb = await readXlsx(file);
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const aoa = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-
-    // find header row
-    let headerIdx = aoa.findIndex(r => r.some(c => String(c).toLowerCase().includes('creator name')));
-    if (headerIdx < 0) headerIdx = 0;
-    const headers = aoa[headerIdx].map(h => String(h).trim());
-    const colOf = (needle) => headers.findIndex(h => h.toLowerCase().includes(needle));
-
-    const idx = {
-      creator: colOf('creator name'),
-      creatorId: colOf('creator id'),
-      video: colOf('video info'),
-      videoId: colOf('video id'),
-      time: colOf('time'),
-      product: colOf('products'),
-      vv: colOf('vv'),
-      likes: colOf('likes'),
-      comments: colOf('comments'),
-      shares: colOf('shares'),
-      vlclicks: headers.findIndex(h => /v-to-l clicks/i.test(h)),
-      pclicks: headers.findIndex(h => /product clicks/i.test(h)),
-      orders: colOf('orders'),
-      gmv: headers.findIndex(h => /gross merchandise/i.test(h)) >= 0
-           ? headers.findIndex(h => /gross merchandise/i.test(h))
-           : headers.findIndex(h => /video.*gmv|gmv.*video|shoppable.*gmv/i.test(h)),
-      ctr: headers.findIndex(h => /click-through rate/i.test(h))
-    };
-    const parsePct = (v) => {
-      if (v === null || v === undefined || v === '' || v === '--') return 0;
-      if (typeof v === 'number') return v > 1 ? v : v * 100; // decimal fraction -> percent
-      const s = String(v).trim();
-      const hasPct = s.endsWith('%');
-      const n = parseFloat(s.replace(/[%,\s]/g,''));
-      if (isNaN(n)) return 0;
-      return hasPct ? n : (n > 1 ? n : n * 100);
-    };
-
-    // Date range from first row (cell A1 has "[Date Range]: ...")
-    let range = '';
-    const a1 = String(aoa[0]?.[0] || '');
-    const m = a1.match(/Date Range\]?\s*:\s*(.+)/i);
-    if (m) range = m[1].trim();
-
-    const rows = [];
-    for (let i = headerIdx+1; i < aoa.length; i++){
-      const r = aoa[i];
-      if (!r || r.every(c => c === '' || c == null)) continue;
-      const creator = String(r[idx.creator] ?? '').trim();
-      if (!creator) continue;
-      const videoId = String(r[idx.videoId] ?? '').trim();
-      const handle = cleanHandle(creator);
-      const link = videoId ? `https://www.tiktok.com/@${handle}/video/${videoId}` : '';
-      rows.push({
-        creator, creatorId: r[idx.creatorId],
-        video: String(r[idx.video] ?? ''),
-        videoId, link,
-        time: r[idx.time],
-        product: r[idx.product],
-        vv: toNumber(r[idx.vv]),
-        likes: toNumber(r[idx.likes]),
-        comments: toNumber(r[idx.comments]),
-        shares: toNumber(r[idx.shares]),
-        vlclicks: toNumber(r[idx.vlclicks]),
-        pclicks: toNumber(r[idx.pclicks]),
-        orders: toNumber(r[idx.orders]),
-        gmv: toNumber(r[idx.gmv]),
-        ctrNum: parsePct(r[idx.ctr]),
-        ctr: r[idx.ctr]
-      });
+  // Best-effort date label from filename + the workbook header.
+  function deriveDateLabel(filename, headerLabel){
+    if (headerLabel) {
+      // Single date: "2026-04-20 ~ 2026-04-20" -> "2026-04-20"
+      const m = headerLabel.match(/(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})/);
+      if (m) return (m[1] === m[2]) ? m[1] : (m[1] + ' → ' + m[2]);
+      const m2 = headerLabel.match(/\d{4}-\d{2}-\d{2}/);
+      if (m2) return m2[0];
     }
-
-    dailyRows = rows;
-    renderDaily(range);
+    // Try filename: e.g. Video-Performance-List_20260422... or 2026-04-22
+    const m1 = filename.match(/(\d{4})[-_]?(\d{2})[-_]?(\d{2})/);
+    if (m1) return `${m1[1]}-${m1[2]}-${m1[3]}`;
+    return filename;
   }
 
-  function renderDaily(range){
-    const result = $('#daily-result');
-    result.hidden = false;
+  function dateKeyOf(label){
+    const m = String(label||'').match(/(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[1]}${m[2]}${m[3]}` : String(label||'');
+  }
+
+  async function handleDailyFile(file){
+    try {
+      const wb = await readXlsx(file);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const aoa = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+      let headerIdx = aoa.findIndex(r => r.some(c => String(c).toLowerCase().includes('creator name')));
+      if (headerIdx < 0) headerIdx = 0;
+      const headers = aoa[headerIdx].map(h => String(h).trim());
+      const colOf = (needle) => headers.findIndex(h => h.toLowerCase().includes(needle));
+
+      const idx = {
+        creator: colOf('creator name'),
+        creatorId: colOf('creator id'),
+        video: colOf('video info'),
+        videoId: colOf('video id'),
+        time: colOf('time'),
+        product: colOf('products'),
+        vv: colOf('vv'),
+        likes: colOf('likes'),
+        comments: colOf('comments'),
+        shares: colOf('shares'),
+        vlclicks: headers.findIndex(h => /v-to-l clicks/i.test(h)),
+        pclicks: headers.findIndex(h => /product clicks/i.test(h)),
+        orders: colOf('orders'),
+        gmv: headers.findIndex(h => /gross merchandise/i.test(h)) >= 0
+             ? headers.findIndex(h => /gross merchandise/i.test(h))
+             : headers.findIndex(h => /video.*gmv|gmv.*video|shoppable.*gmv/i.test(h)),
+        ctr: headers.findIndex(h => /click-through rate/i.test(h))
+      };
+      const parsePct = (v) => {
+        if (v === null || v === undefined || v === '' || v === '--') return 0;
+        if (typeof v === 'number') return v > 1 ? v : v * 100;
+        const s = String(v).trim();
+        const hasPct = s.endsWith('%');
+        const n = parseFloat(s.replace(/[%,\s]/g,''));
+        if (isNaN(n)) return 0;
+        return hasPct ? n : (n > 1 ? n : n * 100);
+      };
+
+      let headerLabel = '';
+      const a1 = String(aoa[0]?.[0] || '');
+      const m = a1.match(/Date Range\]?\s*:\s*(.+)/i);
+      if (m) headerLabel = m[1].trim();
+      const dateLabel = deriveDateLabel(file.name, headerLabel);
+
+      const rows = [];
+      for (let i = headerIdx+1; i < aoa.length; i++){
+        const r = aoa[i];
+        if (!r || r.every(c => c === '' || c == null)) continue;
+        const creator = String(r[idx.creator] ?? '').trim();
+        if (!creator) continue;
+        const videoId = String(r[idx.videoId] ?? '').trim();
+        const handle = cleanHandle(creator);
+        const link = videoId ? `https://www.tiktok.com/@${handle}/video/${videoId}` : '';
+        rows.push({
+          creator, creatorId: r[idx.creatorId],
+          video: String(r[idx.video] ?? ''),
+          videoId, link,
+          time: r[idx.time],
+          product: r[idx.product],
+          vv: toNumber(r[idx.vv]),
+          likes: toNumber(r[idx.likes]),
+          comments: toNumber(r[idx.comments]),
+          shares: toNumber(r[idx.shares]),
+          vlclicks: toNumber(r[idx.vlclicks]),
+          pclicks: toNumber(r[idx.pclicks]),
+          orders: toNumber(r[idx.orders]),
+          gmv: toNumber(r[idx.gmv]),
+          ctrNum: parsePct(r[idx.ctr]),
+          ctr: r[idx.ctr],
+          date: dateLabel
+        });
+      }
+
+      const id = 'f' + Date.now() + Math.random().toString(36).slice(2,6);
+      // De-dup: replace existing entry with same date label
+      const existing = dailyFiles.findIndex(f => f.dateLabel === dateLabel);
+      const entry = { id, fileName: file.name, dateLabel, dateKey: dateKeyOf(dateLabel), rows };
+      if (existing >= 0) {
+        dailyFiles[existing] = entry;
+        showToast(`Replaced data for ${dateLabel}`);
+      } else {
+        dailyFiles.push(entry);
+        showToast(`Added ${dateLabel} · ${rows.length} videos`);
+      }
+      $('#dz-daily').classList.add('filled');
+      $('#dz-daily .dz-title').textContent = `${dailyFiles.length} file${dailyFiles.length>1?'s':''} loaded · drop more to add`;
+      renderDaily();
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to read "' + file.name + '"');
+    }
+  }
+
+  function removeDailyFile(id){
+    dailyFiles = dailyFiles.filter(f => f.id !== id);
+    if (dailyFiles.length === 0){
+      $('#dz-daily').classList.remove('filled');
+      $('#dz-daily .dz-title').textContent = 'Drop one or several Video-Performance-List files';
+      $('#daily-result').hidden = true;
+      $('#daily-loaded').hidden = true;
+      return;
+    }
+    $('#dz-daily .dz-title').textContent = `${dailyFiles.length} file${dailyFiles.length>1?'s':''} loaded · drop more to add`;
+    renderDaily();
+  }
+
+  function aggregateByDate(){
+    const map = new Map();
+    dailyFiles.forEach(f => {
+      const key = f.dateLabel;
+      if (!map.has(key)) {
+        map.set(key, { dateLabel: key, dateKey: f.dateKey, vv:0, pclicks:0, gmv:0, ctrSum:0, count:0, fileIds: [] });
+      }
+      const a = map.get(key);
+      a.fileIds.push(f.id);
+      f.rows.forEach(r => {
+        a.vv += r.vv;
+        a.pclicks += r.pclicks;
+        a.gmv += r.gmv;
+        a.ctrSum += r.ctrNum;
+        a.count += 1;
+      });
+    });
+    const arr = Array.from(map.values());
+    arr.sort((a,b) => String(a.dateKey).localeCompare(String(b.dateKey)));
+    return arr;
+  }
+
+  function renderDaily(){
+    if (dailyFiles.length === 0){ $('#daily-result').hidden = true; $('#daily-loaded').hidden = true; return; }
+    $('#daily-result').hidden = false;
+
+    // Loaded files chips
+    const chipsEl = $('#daily-loaded');
+    chipsEl.hidden = false;
+    chipsEl.innerHTML = dailyFiles
+      .slice()
+      .sort((a,b) => String(a.dateKey).localeCompare(String(b.dateKey)))
+      .map(f => `<span class="file-chip" title="${escapeHtml(f.fileName)}">
+        <span class="file-date">${escapeHtml(f.dateLabel)}</span>
+        <span class="muted">· ${f.rows.length} videos</span>
+        <button class="file-x" data-rm="${f.id}" title="Remove">×</button>
+      </span>`).join('');
+    chipsEl.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => removeDailyFile(b.dataset.rm)));
+
+    // === Summary by date ===
+    const agg = aggregateByDate();
+    const sumBody = $('#daily-summary tbody');
+    sumBody.innerHTML = agg.map(a => {
+      const ctor = a.count ? (a.ctrSum / a.count) : 0;
+      return `<tr data-date="${escapeHtml(a.dateLabel)}">
+        <td><b>${escapeHtml(a.dateLabel)}</b></td>
+        <td class="num">${fmtNum(a.vv)}</td>
+        <td class="num">${fmtNum(a.pclicks)}</td>
+        <td class="num">${ctor.toFixed(2)}%</td>
+        <td class="num">${fmtMoney(a.gmv)}</td>
+        <td class="num">${a.count}</td>
+        <td class="num"><button class="row-x" data-rm-date="${escapeHtml(a.dateLabel)}" title="Remove this date">×</button></td>
+      </tr>`;
+    }).join('');
+    sumBody.querySelectorAll('[data-rm-date]').forEach(b => b.addEventListener('click', () => {
+      const lab = b.dataset.rmDate;
+      dailyFiles.filter(f => f.dateLabel === lab).forEach(f => removeDailyFile(f.id));
+    }));
+
+    // Totals row
+    const totV = agg.reduce((s,a)=>s+a.vv,0);
+    const totPC = agg.reduce((s,a)=>s+a.pclicks,0);
+    const totG = agg.reduce((s,a)=>s+a.gmv,0);
+    const totVids = agg.reduce((s,a)=>s+a.count,0);
+    const allCtor = totVids ? agg.reduce((s,a)=>s+a.ctrSum,0)/totVids : 0;
+    $('#daily-summary tfoot').innerHTML = `<tr>
+      <td>Total · ${agg.length} day${agg.length>1?'s':''}</td>
+      <td class="num">${fmtNum(totV)}</td>
+      <td class="num">${fmtNum(totPC)}</td>
+      <td class="num">${allCtor.toFixed(2)}%</td>
+      <td class="num">${fmtMoney(totG)}</td>
+      <td class="num">${totVids}</td>
+      <td></td>
+    </tr>`;
+
+    // Top stats
+    $('#daily-files-count').textContent = `${dailyFiles.length} file${dailyFiles.length>1?'s':''} · ${agg.length} day${agg.length>1?'s':''}`;
+    $('#tot-vv').textContent = fmtNum(totV);
+    $('#tot-clicks').textContent = fmtNum(totPC);
+    $('#avg-ctr').textContent = allCtor.toFixed(2)+'%';
+    $('#tot-gmv').textContent = fmtMoney(totG);
+
+    // === Per-video table ===
+    const allRows = [];
+    dailyFiles.forEach(f => f.rows.forEach(r => allRows.push(r)));
+    $('#per-video-count').textContent = `(${allRows.length} videos)`;
+
+    // Date filter dropdown
+    const dateFilter = $('#daily-date-filter');
+    const currentVal = dateFilter.value;
+    const dateOpts = ['<option value="">All dates</option>'].concat(
+      agg.map(a => `<option value="${escapeHtml(a.dateLabel)}"${a.dateLabel===currentVal?' selected':''}>${escapeHtml(a.dateLabel)}</option>`)
+    );
+    dateFilter.innerHTML = dateOpts.join('');
 
     const q = $('#daily-search').value.trim().toLowerCase();
-    let data = dailyRows.slice();
+    const dfVal = dateFilter.value;
+    let data = allRows.slice();
+    if (dfVal) data = data.filter(r => r.date === dfVal);
     if (q){
       data = data.filter(r =>
         r.creator.toLowerCase().includes(q) ||
@@ -191,25 +347,11 @@
       return String(av||'').localeCompare(String(bv||''))*d;
     });
 
-    // Summary
-    $('#daily-range').textContent = range ? 'Date: ' + range : 'Date range not detected';
-    $('#daily-count').textContent = `${dailyRows.length} videos`;
-    const totV = dailyRows.reduce((s,r)=>s+r.vv,0);
-    const totPC = dailyRows.reduce((s,r)=>s+r.pclicks,0);
-    const totG = dailyRows.reduce((s,r)=>s+r.gmv,0);
-    // CTOR = simple average of per-video CTR percentages
-    const avgCtor = dailyRows.length
-      ? dailyRows.reduce((s,r)=>s+r.ctrNum,0) / dailyRows.length
-      : 0;
-    $('#tot-vv').textContent = fmtNum(totV);
-    $('#tot-clicks').textContent = fmtNum(totPC);
-    $('#avg-ctr').textContent = avgCtor.toFixed(2)+'%';
-    $('#tot-gmv').textContent = fmtMoney(totG);
-
     const tb = $('#daily-table tbody');
     tb.innerHTML = data.map(r => {
       const ctr = r.ctrNum.toFixed(2) + '%';
       return `<tr>
+        <td>${escapeHtml(r.date||'')}</td>
         <td><div class="creator-cell"><div class="avatar" style="background:${colorFor(r.creator)}">${escapeHtml(initials(r.creator))}</div>@${escapeHtml(r.creator)}</div></td>
         <td class="wrap" title="${escapeHtml(r.video)}">${escapeHtml(String(r.video).slice(0,140))}${String(r.video).length>140?'…':''}</td>
         <td>${escapeHtml(String(r.time||''))}</td>
@@ -228,18 +370,53 @@
     th.addEventListener('click', () => {
       const k = th.dataset.key; if (!k) return;
       if (dailySort.key === k) dailySort.dir *= -1; else { dailySort.key = k; dailySort.dir = -1; }
-      renderDaily($('#daily-range').textContent.replace(/^Date:\s*/,''));
+      renderDaily();
     });
   });
-  $('#daily-search').addEventListener('input', () => renderDaily($('#daily-range').textContent.replace(/^Date:\s*/,'')));
+  $('#daily-search').addEventListener('input', renderDaily);
+  $('#daily-date-filter').addEventListener('change', renderDaily);
   $('#btn-daily').addEventListener('click', e => { e.stopPropagation(); $('#file-daily').click(); });
-  $('#daily-export').addEventListener('click', () => {
-    const head = ['Creator','Video','Posted','Views','Likes','Product Clicks','CTOR','Orders','GMV','Link'];
-    const body = dailyRows.map(r => [r.creator, r.video, r.time, r.vv, r.likes,
-      r.pclicks, r.ctrNum.toFixed(2)+'%', r.orders, r.gmv.toFixed(2), r.link]);
-    downloadCSV([head, ...body], 'daily-performance.csv');
+
+  $('#daily-clear').addEventListener('click', () => {
+    dailyFiles = [];
+    $('#dz-daily').classList.remove('filled');
+    $('#dz-daily .dz-title').textContent = 'Drop one or several Video-Performance-List files';
+    $('#daily-result').hidden = true;
+    $('#daily-loaded').hidden = true;
+    showToast('Cleared');
   });
-  wireDropzone('dz-daily','file-daily', handleDailyFile);
+
+  function summaryAsRows(){
+    const agg = aggregateByDate();
+    const head = ['Date','Views','Product Clicks','CTOR','GMV'];
+    const body = agg.map(a => {
+      const ctor = a.count ? (a.ctrSum/a.count) : 0;
+      return [a.dateLabel, a.vv, a.pclicks, ctor.toFixed(2)+'%', a.gmv.toFixed(2)];
+    });
+    return [head, ...body];
+  }
+
+  $('#daily-export').addEventListener('click', () => {
+    downloadCSV(summaryAsRows(), 'daily-summary.csv');
+  });
+
+  $('#daily-copy').addEventListener('click', async () => {
+    const rows = summaryAsRows();
+    // Tab-separated for direct paste into Google Sheets / Excel
+    const tsv = rows.map(r => r.join('\t')).join('\n');
+    try {
+      await navigator.clipboard.writeText(tsv);
+      showToast('Copied — paste into your sheet');
+    } catch (e) {
+      // Fallback
+      const ta = document.createElement('textarea');
+      ta.value = tsv; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove();
+      showToast('Copied');
+    }
+  });
+
+  wireDropzone('dz-daily','file-daily', handleDailyFile, {multiple:true});
 
   // ====================== Affiliate Status ======================
   let vlistRows = [];
